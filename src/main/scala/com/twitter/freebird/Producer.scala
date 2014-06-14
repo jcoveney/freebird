@@ -23,7 +23,9 @@ sealed trait Producer[P <: StreamPlatform[P], S <: State, T] {
 
   def map[U](fn: T => U): Producer[P, NoState, U] = Map(this, fn)
 
-  def concatMap[U](fn: T => TraversableOnce[U]): Producer[P, NoState, U] = FlatMap(this, fn)
+  def optionMap[U](fn: T => Option[U]): Producer[P, NoState, U] = OptionMap(this, fn)
+
+  def concatMap[U](fn: T => TraversableOnce[U]): Producer[P, NoState, U] = ConcatMap(this, fn)
 
   def filter(fn: T => Boolean): Producer[P, NoState, T] = Filter(this, fn)
 
@@ -38,7 +40,7 @@ sealed trait Producer[P <: StreamPlatform[P], S <: State, T] {
   def write(store: P#Store[T]): Producer[P, StoreState, T] = Store(this, store)
 
   def reduceByKey[K, V](fn: (V, V) => V)(implicit ev: T <:< Keyed[K, V]): Producer[P, NoState, Keyed[K, V]] =
-    Summer(this.asInstanceOf[Producer[P, S, Keyed[K, V]]], fn)
+    Reducer(this.asInstanceOf[Producer[P, S, Keyed[K, V]]], fn)
 
   def sort[NewP <: FreePlatform[NewP], K, V](implicit ord: Ordering[V], ev1: P <:< NewP, ev2: T <:< Keyed[K, V]): Producer[NewP, SortedState, Keyed[K, V]] =
     Sorted(this.asInstanceOf[Producer[NewP, SortedState, Keyed[K, V]]], ord)
@@ -54,7 +56,10 @@ case class Source[P <: StreamPlatform[P], T](source: P#Source[T])
 case class Map[P <: StreamPlatform[P], T, U](parent: Producer[P, _ <: State, T], fn: T => U)
   extends Producer[P, NoState, U]
 
-case class FlatMap[P <: StreamPlatform[P], T, U](parent: Producer[P, _ <: State, T], fn: T => TraversableOnce[U])
+case class OptionMap[P <: StreamPlatform[P], T, U](parent: Producer[P, _ <: State, T], fn: T => Option[U])
+  extends Producer[P, NoState, U]
+
+case class ConcatMap[P <: StreamPlatform[P], T, U](parent: Producer[P, _ <: State, T], fn: T => TraversableOnce[U])
   extends Producer[P, NoState, U]
 
 case class Filter[P <: StreamPlatform[P], T](parent: Producer[P, _ <: State, T], fn: T => Boolean)
@@ -69,7 +74,7 @@ case class GroupBy[P <: StreamPlatform[P], K, V](parent: Producer[P, _ <: State,
 case class GroupAll[P <: StreamPlatform[P], V](parent: Producer[P, _ <: State, V])
   extends Producer[P, NoState, Keyed[Unit, V]]
 
-case class Summer[P <: StreamPlatform[P], K, V](parent: Producer[P, _ <: State, Keyed[K, V]], fn: (V, V) => V)
+case class Reducer[P <: StreamPlatform[P], K, V](parent: Producer[P, _ <: State, Keyed[K, V]], fn: (V, V) => V)
   extends Producer[P, NoState, Keyed[K, V]]
 
 case class Sorted[P <: FreePlatform[P], K, V](parent: Producer[P, _ <: State, Keyed[K, V]], ord: Ordering[V])
@@ -83,8 +88,3 @@ case class Store[P <: StreamPlatform[P], T](parent: Producer[P, _ <: State, T], 
 
 case class Name[P <: StreamPlatform[P], S <: State, T](parent: Producer[P, S, T], name: String)
   extends Producer[P, S, T]
-
-//IDEA: can raise the types up one level, so that we specify what our actual return type is, that way some things can
-// set themselves as passthrough
-
-//TODO need some sort of elegant naming scheme (the above could help with that)
