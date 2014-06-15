@@ -36,12 +36,11 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       case GroupBy(parent, fn)    => inPlan(parent.map { v => (fn(v), v) }.group)
       case GroupAll(parent)       => inPlan(parent.groupBy { _ => Unit })
       case Merge(left, right)     => MergeMP(inPlan(left), inPlan(right))
-      case Join(left, right) => {
+      case Join(left, right) =>
         inPlan((left.flatten ++ right.flatten).map {
           case Left((k, v)) => (k, Left(v))
           case Right((k, v)) => (k, Right(v))
         }.group)
-      }
       // Because the distinction between Keyed/Unkeyed disappears in the physical layer,
       // we can conveniently utilize operations in the unkeyed layer. This is not necessaryily
       // the case for all platforms but is fine here.
