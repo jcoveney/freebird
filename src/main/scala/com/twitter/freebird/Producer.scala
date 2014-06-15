@@ -17,33 +17,39 @@ sealed trait PlannableState extends State
 sealed trait StoreState extends PlannableState
 
 object Wrapper {
-  implicit def unkeyedWrapper[P <: StreamPlatform[P], S <: State, T]: Wrapper[P, S, T, UnkeyedProducer[P, S, T]] =
-    new Wrapper[P, S, T, UnkeyedProducer[P, S, T]] {
+  implicit def unkeyedWrapper[
+    P <: StreamPlatform[P], S <: State, T, NewS <: State
+  ]: Wrapper[P, S, T, UnkeyedProducer[P, S, T], NewS, UnkeyedProducer[P, NewS, T]] =
+    new Wrapper[P, S, T, UnkeyedProducer[P, S, T], NewS, UnkeyedProducer[P, NewS, T]] {
       override def apply(
         p: Producer[P, S, T, UnkeyedProducer[P, S, T]],
         ann: Annotation[P, T]
-      ): UnkeyedProducer[P, S, T] = UnkeyedWrapper(p, ann)
+      ): UnkeyedProducer[P, NewS, T] = UnkeyedWrapper(p, ann).asInstanceOf[UnkeyedProducer[P, NewS, T]]
     }
 
-  implicit def keyedWrapper[P <: StreamPlatform[P], S <: State, K, V]: Wrapper[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]]  =
-    new Wrapper[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]] {
+  implicit def keyedWrapper[
+    P <: StreamPlatform[P], S <: State, K, V, NewS <: State
+  ]: Wrapper[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V], NewS, KeyedProducer[P, NewS, K, V]]  =
+    new Wrapper[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V], NewS, KeyedProducer[P, NewS, K, V]] {
       override def apply(
         p: Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]],
         ann: Annotation[P, (K, TraversableOnce[V])]
-      ): KeyedProducer[P, S, K, V] = KeyedWrapper(p, ann)
+      ): KeyedProducer[P, NewS, K, V] = KeyedWrapper(p, ann).asInstanceOf[KeyedProducer[P, NewS, K, V]]
     }
 }
-sealed trait Wrapper[P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This]] {
-  def apply(p: Producer[P, S, T, This], ann: Annotation[P, T]): This
+sealed trait Wrapper[
+    P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This],
+    NewS <: State, NewThis <: Producer[P, NewS, T, NewThis]] {
+  def apply(p: Producer[P, S, T, This], ann: Annotation[P, T]): NewThis
 }
 
-
 sealed trait Producer[P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This]] {
-  def name(str: String)(implicit wrap: Wrapper[P, S, T, This]): This = wrap(this, Name(str))
+  def name(str: String)(implicit wrap: Wrapper[P, S, T, This, S, This]): This = wrap(this, Name(str))
 
+  //TODO need to figure out how to get the StoreState set
   def write[NewThis <: Producer[P, StoreState, T, NewThis]](store: P#Store[T])
-      (implicit wrap: Wrapper[P, S, T, This], ev: NewThis <:< This): NewThis =
-    wrap(this, Store(store)).asInstanceOf[NewThis]
+      (implicit wrap: Wrapper[P, S, T, This, StoreState, NewThis]): NewThis =
+    wrap(this, Store(store))
 }
 
 sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
@@ -120,7 +126,10 @@ case class Name[P <: StreamPlatform[P], T](str: String) extends Annotation[P, T]
 case class Store[P <: StreamPlatform[P], T](store: P#Store[T]) extends Annotation[P, T]
 
 case class UnkeyedWrapper[P <: StreamPlatform[P], S <: State, T]
-  (wrapped: Producer[P, S, T, UnkeyedProducer[P, S, T]], annotation: Annotation[P, T]) extends UnkeyedProducer[P, S, T]
+    (wrapped: Producer[P, S, T, UnkeyedProducer[P, S, T]], annotation: Annotation[P, T])
+  extends UnkeyedProducer[P, S, T]
 
-case class KeyedWrapper[P <: StreamPlatform[P], S <: State, K, V]
-  (wrapped: Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]], annotation: Annotation[P, (K, TraversableOnce[V])]) extends KeyedProducer[P, S, K, V]
+case class KeyedWrapper[P <: StreamPlatform[P], S <: State, K, V](
+  wrapped: Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]],
+  annotation: Annotation[P, (K, TraversableOnce[V])]
+) extends KeyedProducer[P, S, K, V]
