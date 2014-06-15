@@ -28,19 +28,14 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
     p match {
       case Source(source)         => SourceMP(source)
       case ConcatMap(parent, fn)  => ConcatMapMP(inPlan(parent), fn)
-      case Map(parent, fn)        => inPlan(parent.concatMap(v => List(fn(v))))
+      case Group(parent)          => GroupMP(inPlan(parent))
+      case Merge(left, right)     => MergeMP(inPlan(left), inPlan(right))
       case OptionMap(parent, fn)  => inPlan(parent.concatMap(fn(_).toList))
+      case Map(parent, fn)        => inPlan(parent.concatMap { v => List(fn(v)) })
       case Filter(parent, fn)     => inPlan(parent.concatMap { v => if (fn(v)) List(v) else Nil })
       case Collect(parent, fn)    => inPlan(parent.optionMap(fn.lift))
-      case Group(parent)          => GroupMP(inPlan(parent))
       case GroupBy(parent, fn)    => inPlan(parent.map { v => (fn(v), v) }.group)
       case GroupAll(parent)       => inPlan(parent.groupBy { _ => Unit })
-      case Merge(left, right)     => MergeMP(inPlan(left), inPlan(right))
-      case Join(left, right) =>
-        inPlan((left.flatten ++ right.flatten).map {
-          case Left((k, v)) => (k, Left(v))
-          case Right((k, v)) => (k, Right(v))
-        }.group)
       // Because the distinction between Keyed/Unkeyed disappears in the physical layer,
       // we can conveniently utilize operations in the unkeyed layer. This is not necessaryily
       // the case for all platforms but is fine here.
@@ -56,7 +51,11 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       case KeyedWrapper(parent, Store(store))   => StoreMP(inPlan(parent), store)
       case UnkeyedWrapper(parent, Name(str))    => inPlan(parent)
       case UnkeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
-
+      case Join(left, right) =>
+        inPlan((left.flatten ++ right.flatten).map {
+          case Left((k, v)) => (k, Left(v))
+          case Right((k, v)) => (k, Right(v))
+        }.group)
     }
 
   //TODO I think we can do _ <: PlannableState, as we don't need it now
