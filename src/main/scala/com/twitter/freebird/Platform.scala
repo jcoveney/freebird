@@ -20,45 +20,58 @@ import collection.mutable.{ Buffer, Map => MMap }
 class MemoryPlatform extends FreePlatform[MemoryPlatform] {
   type Source[T] = List[T]
   type Store[T] = Buffer[T]
-
   type Plan[T] = MemoryPhysical[T]
-
-  private[this] def optionFun2ConcatFun[U, T](fn: U => Option[T]): U => TraversableOnce[T] = fn(_).toList
-
-  private[this] def map2ConcatFun[U, T](fn: U => T): U => TraversableOnce[T] = { v => List(fn(v)) }
-
-  private[this] def keyGrabbingFun[K, V](fn: V => K): V => (K, V) = { v => (fn(v), v)}
 
   private[this] def inPlan[T, This <: Producer[MemoryPlatform, _ <: State, T, This]](
     p: Producer[MemoryPlatform, _ <: State, T, This]
   ): MemoryPhysical[T] =
     p match {
-      case Source(source) => SourceMP(source)
-      case Map(parent, fn) => inPlan(parent.concatMap(map2ConcatFun(fn)))
-      case OptionMap(parent, fn) => inPlan(parent.concatMap(optionFun2ConcatFun(fn)))
-      case ConcatMap(parent, fn) => ConcatMapMP(inPlan(parent), fn)
-      case Filter(parent, fn) => inPlan(ConcatMap(parent, { v: T => if (fn(v)) List(v) else Nil }))
-      case Group(parent) => GroupMP(inPlan(parent))
-      case GroupBy(parent, fn) => inPlan(Group(Map(parent, keyGrabbingFun(fn))))
-      case GroupAll(parent) => inPlan(GroupBy(parent, { _ => Unit }))
-      case Reducer(parent, fn) => ReducerMP(inPlan(parent), fn)
-      case Sorted(parent, ord) => SortMP(inPlan(parent), ord)
-      case Fold(parent, init, fn) => FoldMP(inPlan(parent), init, fn)
-      case KeyedWrapper(parent, Name(str)) => inPlan(parent)
-      case KeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
-      case UnkeyedWrapper(parent, Name(str)) => inPlan(parent)
+      case Source(source)         => SourceMP(source)
+      case ConcatMap(parent, fn)  => ConcatMapMP(inPlan(parent), fn)
+      case Map(parent, fn)        => inPlan(parent.concatMap(v => List(fn(v))))
+      case OptionMap(parent, fn)  => inPlan(parent.concatMap(fn(_).toList))
+      case Filter(parent, fn)     => inPlan(parent.concatMap { v => if (fn(v)) List(v) else Nil })
+      case Collect(parent, fn)    => inPlan(parent.optionMap(fn.lift))
+      case Group(parent)          => GroupMP(inPlan(parent))
+      case GroupBy(parent, fn)    => inPlan(parent.map { v => (fn(v), v) }.group)
+      case GroupAll(parent)       => inPlan(parent.groupBy { _ => Unit })
+      case Merge(left, right)     => MergeMP(inPlan(left), inPlan(right))
+      case Join(left, right) => {
+        inPlan((left.flatten ++ right.flatten).map {
+          case Left((k, v)) => (k, Left(v))
+          case Right((k, v)) => (k, Right(v))
+        }.group)
+      }
+      // Because the distinction between Keyed/Unkeyed disappears in the physical layer,
+      // we can conveniently utilize operations in the unkeyed layer. This is not necessaryily
+      // the case for all platforms but is fine here.
+      case Unkey(parent)          => inPlan(parent)
+      case Flatten(parent)        => inPlan(parent.unkey.concatMap { case (k, v) => v.map { (k, _) } })
+      case Keys(parent)           => inPlan(parent.unkey.map(_._1))
+      case Values(parent)         => inPlan(parent.unkey.concatMap(_._2))
+      case MapValues(parent, fn)  => inPlan(parent.unkey.map { case (k, v) => (k, v.map(fn)) } )
+      case Reducer(parent, fn)    => inPlan(parent.unkey.map { case (k, v) => (k, v.reduce(fn))})
+      case Fold(parent, init, fn) => inPlan(parent.unkey.map { case (k, v) => (k, v.foldLeft(init)(fn))})
+      case Sorted(parent, ord)    => inPlan(parent.unkey.map { case (k, v) => (k, v.toIndexedSeq.sorted(ord))})
+      case KeyedWrapper(parent, Name(str))      => inPlan(parent)
+      case KeyedWrapper(parent, Store(store))   => StoreMP(inPlan(parent), store)
+      case UnkeyedWrapper(parent, Name(str))    => inPlan(parent)
       case UnkeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
-      case Join(left, right) => JoinMP(inPlan(left), inPlan(right))
-      case Merge(left, right) => MergeMP(inPlan(left), inPlan(right))
-      case Flatten(parent) => FlattenMP(inPlan(parent))
+
     }
 
   //TODO I think we can do _ <: PlannableState, as we don't need it now
   override def plan[T, This <: Producer[MemoryPlatform, StoreState, T, This]]
-    (p: Producer[MemoryPlatform, StoreState, T, This]) = inPlan[T, This](p)
+    (p: Producer[MemoryPlatform, StoreState, T, This]) = inPlan(p)
 
   override def run[T](plan: MemoryPhysical[T]) {
     plan.process()
+  }
+
+  // Useful for debugging
+  def dump[T, This <: Producer[MemoryPlatform, _ <: State, T, This]]
+    (p: Producer[MemoryPlatform, _ <: State, T, This]) {
+      inPlan(p).process().foreach(println(_))
   }
 }
 
@@ -86,33 +99,6 @@ case class GroupMP[K, V](p: MemoryPhysical[(K, V)]) extends MemoryPhysical[(K, T
   override def process() = p.process().groupBy(_._1).mapValues(_.map(_._2)).toSeq
 }
 
-case class ReducerMP[K, V](p: MemoryPhysical[(K, TraversableOnce[V])], fn: (V, V) => V) extends MemoryPhysical[(K, V)] {
-  override def process() = p.process().map { case (k, v) => (k, v.reduce(fn)) }
-}
-
-case class SortMP[K, V](p: MemoryPhysical[(K, TraversableOnce[V])], ord: Ordering[V]) extends MemoryPhysical[(K, TraversableOnce[V])] {
-  override def process() = p.process().map { case (k, v) => (k, v.toIndexedSeq.sorted(ord)) }
-}
-
-case class FoldMP[K, V, U](p: MemoryPhysical[(K, TraversableOnce[V])], init: U, fn: (U, V) => U) extends MemoryPhysical[(K, U)] {
-  override def process() = p.process().map { case (k, v) => (k, v.foldLeft(init)(fn)) }
-}
-
 case class MergeMP[T, U](left: MemoryPhysical[T], right: MemoryPhysical[U]) extends MemoryPhysical[Either[T, U]] {
   override def process() = left.process().map(Left(_)) ++ right.process().map(Right(_))
-}
-
-case class FlattenMP[K, V](p: MemoryPhysical[(K, TraversableOnce[V])]) extends MemoryPhysical[(K, V)] {
-  override def process() = p.process().flatMap { case (k, v) => v.map { (k, _) } }
-}
-
-case class JoinMP[K, V, V2](
-  left: MemoryPhysical[(K, TraversableOnce[V])],
-  right: MemoryPhysical[(K, TraversableOnce[V2])]
-) extends MemoryPhysical[(K, TraversableOnce[Either[V, V2]])] {
-  override def process() = {
-    val leftList = left.process().flatMap { case (k, v) => v.map { in => (k, Left[V, V2](in)) } }
-    val rightList = right.process().flatMap { case (k, v) => v.map { in => (k, Right[V, V2](in)) } }
-    (leftList ++ rightList).groupBy(_._1).mapValues { _.map(_._2) }.toSeq
-  }
 }

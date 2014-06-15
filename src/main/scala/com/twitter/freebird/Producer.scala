@@ -45,6 +45,9 @@ sealed trait Producer[P <: StreamPlatform[P], S <: State, T, This <: Producer[P,
       (implicit wrap: Wrapper[P, S, T, This, StoreState, NewThis]): NewThis = wrap(this, Store(store))
 }
 
+// Note that it would be easy to implement a lot of operators in terms of each other, but I want
+// the graph to be as rich as possible. I leave it to the planner to do any rewriting for convenience
+// (which the memory platform does do)
 sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
     extends Producer[P, S, T, UnkeyedProducer[P, S, T]] {
 
@@ -55,6 +58,8 @@ sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
   def concatMap[U](fn: T => TraversableOnce[U]): UnkeyedProducer[P, NoState, U] = ConcatMap(this, fn)
 
   def filter(fn: T => Boolean): UnkeyedProducer[P, NoState, T] = Filter(this, fn)
+
+  def collect[U](fn: PartialFunction[T, U]): UnkeyedProducer[P, NoState, U] = Collect(this, fn)
 
   def group[K, V](implicit ev: T <:< (K, V)): KeyedProducer[P, NoState, K, V] =
     Group(this.asInstanceOf[UnkeyedProducer[P, S, (K, V)]])
@@ -71,15 +76,15 @@ sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
 
   //def mapGroup[U](fn: (K, TraversibleOnce[V]) => U): UnkeyedProducer[P, NoState, (K, U)] =
 
-  //def mapValues[U](fn: V => U): KeyedProducer[P, NoState, K, U]
+  def mapValues[U](fn: V => U): KeyedProducer[P, NoState, K, U] = MapValues(this, fn)
 
-  //def keys: UnkeyedProducer[P, NoState, K] = Keys(this)
+  def keys: UnkeyedProducer[P, NoState, K] = Keys(this)
 
-  //def values: UnkeyedProducer[P, NoState, V] = Values(this)
+  def values: UnkeyedProducer[P, NoState, V] = Values(this)
 
   def flatten: UnkeyedProducer[P, NoState, (K, V)] = Flatten(this)
 
-  //def unkey: UnkeyedProducer[P, NoState, (K, TraversableOnce[V])] = Unkey(this)
+  def unkey: UnkeyedProducer[P, NoState, (K, TraversableOnce[V])] = Unkey(this)
 
   def join[NewP <: FreePlatform[NewP], S2 <: State, V2](that: KeyedProducer[P, S2, K, V2])
       (implicit ev: P <:< NewP): KeyedProducer[NewP, NoState, K, Either[V, V2]] =
@@ -115,6 +120,9 @@ case class ConcatMap[P <: StreamPlatform[P], T, U](parent: UnkeyedProducer[P, _ 
 case class Filter[P <: StreamPlatform[P], T](parent: UnkeyedProducer[P, _ <: State, T], fn: T => Boolean)
   extends UnkeyedProducer[P, NoState, T]
 
+case class Collect[P <: StreamPlatform[P], T, U](parent: UnkeyedProducer[P, _ <: State, T], fn: PartialFunction[T, U])
+  extends UnkeyedProducer[P, NoState, U]
+
 case class Group[P <: StreamPlatform[P], K, V](parent: UnkeyedProducer[P, _ <: State, (K, V)])
   extends KeyedProducer[P, NoState, K, V]
 
@@ -145,6 +153,18 @@ case class Join[P <: FreePlatform[P], K, V, V2](
 
 case class Flatten[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V])
   extends UnkeyedProducer[P, NoState, (K, V)]
+
+case class Keys[P <: StreamPlatform[P], K](parent: KeyedProducer[P, _ <: State, K, _])
+  extends UnkeyedProducer[P, NoState, K]
+
+case class Values[P <: StreamPlatform[P], V](parent: KeyedProducer[P, _ <: State, _, V])
+  extends UnkeyedProducer[P, NoState, V]
+
+case class Unkey[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V])
+  extends UnkeyedProducer[P, NoState, (K, TraversableOnce[V])]
+
+case class MapValues[P <: StreamPlatform[P], K, V, U](parent: KeyedProducer[P, _ <: State, K, V], fn: V => U)
+  extends KeyedProducer[P, NoState, K, U]
 
 // Annotations give us the power to embed information in the graph, but also to add constraints, such as
 // the StoreState. The annotation type takes precedence in the wrapping however as in the case of Name,
