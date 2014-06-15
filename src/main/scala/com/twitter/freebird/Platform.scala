@@ -29,6 +29,7 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       case Source(source)         => SourceMP(source)
       case ConcatMap(parent, fn)  => ConcatMapMP(inPlan(parent), fn)
       case Group(parent)          => GroupMP(inPlan(parent))
+      case CoGroup(left, right)   => CoGroupMP(inPlan(left), inPlan(right))
       case Merge(left, right)     => MergeMP(inPlan(left), inPlan(right))
       case OptionMap(parent, fn)  => inPlan(parent.concatMap(fn(_).toList))
       case Map(parent, fn)        => inPlan(parent.concatMap { v => List(fn(v)) })
@@ -52,9 +53,8 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       case UnkeyedWrapper(parent, Name(str))    => inPlan(parent)
       case UnkeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
       case Join(left, right) =>
-        inPlan((left.flatten ++ right.flatten).map {
-          case Left((k, v)) => (k, Left(v))
-          case Right((k, v)) => (k, Right(v))
+        inPlan(left.cogroup(right).concatMap { case (k, (lft, rght)) =>
+          lft.flatMap { l => rght.map { r => (k, (l, r)) } }
         }.group)
     }
 
@@ -94,6 +94,21 @@ case class ConcatMapMP[T, U](p: MemoryPhysical[T], fn: T => TraversableOnce[U]) 
 
 case class GroupMP[K, V](p: MemoryPhysical[(K, V)]) extends MemoryPhysical[(K, TraversableOnce[V])] {
   override def process() = p.process().groupBy(_._1).mapValues(_.map(_._2)).toSeq
+}
+
+case class CoGroupMP[K, V, V2](
+  left: MemoryPhysical[(K, TraversableOnce[V])],
+  right:  MemoryPhysical[(K, TraversableOnce[V2])]
+) extends MemoryPhysical[(K, (TraversableOnce[V], TraversableOnce[V2]))] {
+  override def process() = {
+    val lft = left.process().flatMap { case (k, v) => v.map { e => (k, Left[V, V2](e)) } }
+    val rght = right.process().flatMap { case (k, v) => v.map { e => (k, Right[V, V2](e)) } }
+    //TODO rename nodes so this sort of thing doesn't happen (aka the scala Map covered up)
+    (lft ++ rght).foldLeft(collection.immutable.Map.empty[K, (List[V], List[V2])]) {
+      case (cum, (k, Left(v))) => cum + (k -> cum.get(k).map { case (l, r) => (v :: l, r) }.getOrElse((List(v), Nil)))
+      case (cum, (k, Right(v))) => cum + (k -> cum.get(k).map { case (l, r) => (l, v :: r) }.getOrElse((Nil, List(v))))
+    }.toSeq
+  }
 }
 
 case class MergeMP[T, U](left: MemoryPhysical[T], right: MemoryPhysical[U]) extends MemoryPhysical[Either[T, U]] {

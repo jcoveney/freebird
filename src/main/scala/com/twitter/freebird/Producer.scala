@@ -74,7 +74,7 @@ sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
 sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
     extends Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]] {
 
-  //def mapGroup[U](fn: (K, TraversibleOnce[V]) => U): UnkeyedProducer[P, NoState, (K, U)] =
+  //def mapGroup[U](fn: (K, TraversableOnce[V]) => U): UnkeyedProducer[P, NoState, (K, U)] =
 
   def mapValues[U](fn: V => U): KeyedProducer[P, NoState, K, U] = MapValues(this, fn)
 
@@ -87,8 +87,12 @@ sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
   def unkey: UnkeyedProducer[P, NoState, (K, TraversableOnce[V])] = Unkey(this)
 
   def join[NewP <: FreePlatform[NewP], S2 <: State, V2](that: KeyedProducer[P, S2, K, V2])
-      (implicit ev: P <:< NewP): KeyedProducer[NewP, NoState, K, Either[V, V2]] =
+      (implicit ev: P <:< NewP): KeyedProducer[NewP, NoState, K, (V, V2)] =
     Join(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], that.asInstanceOf[KeyedProducer[NewP, S2, K, V2]])
+
+  def cogroup[NewP <: FreePlatform[NewP], S2 <: State, V2](that: KeyedProducer[P, S2, K, V2])
+      (implicit ev: P <:< NewP): UnkeyedProducer[NewP, NoState, (K, (TraversableOnce[V], TraversableOnce[V2]))] =
+    CoGroup(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], that.asInstanceOf[KeyedProducer[NewP, S2, K, V2]])
 
   def reduceByKey(fn: (V, V) => V): UnkeyedProducer[P, NoState, (K, V)] = Reducer(this, fn)
 
@@ -149,7 +153,12 @@ case class Merge[P <: StreamPlatform[P], T, U](
 case class Join[P <: FreePlatform[P], K, V, V2](
   left: KeyedProducer[P, _ <: State, K, V],
   right: KeyedProducer[P, _ <: State, K, V2]
-) extends KeyedProducer[P, NoState, K, Either[V, V2]]
+) extends KeyedProducer[P, NoState, K, (V, V2)]
+
+case class CoGroup[P <: FreePlatform[P], K, V, V2](
+  left: KeyedProducer[P, _ <: State, K, V],
+  right: KeyedProducer[P, _ <: State, K, V2]
+) extends UnkeyedProducer[P, NoState, (K, (TraversableOnce[V], TraversableOnce[V2]))]
 
 case class Flatten[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V])
   extends UnkeyedProducer[P, NoState, (K, V)]
