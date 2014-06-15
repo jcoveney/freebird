@@ -34,9 +34,9 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
   private[this] def inPlan[T, S <: State, This <: Producer[MemoryPlatform, S, T, This]](p: Producer[MemoryPlatform, S, T, This]): MemoryPhysical[T] =
     p match {
       case Source(source) => SourceMP(source)
-      /*case Map(parent, fn) => inPlan(ConcatMap(parent, map2ConcatFun(fn)))
+      case Map(parent, fn) => inPlan(ConcatMap(parent, map2ConcatFun(fn)))
       case OptionMap(parent, fn) => inPlan(ConcatMap(parent, optionFun2ConcatFun(fn)))
-      case ConcatMap(parent, fn) => ConcatMapMP(Some(inPlan(parent)), fn, Nil)
+      case ConcatMap(parent, fn) => ConcatMapMP(inPlan(parent), fn)
       case Filter(parent, fn) => inPlan(ConcatMap(parent, { v: T => if (fn(v)) List(v) else Nil }))
       case Group(parent) => GroupMP(inPlan(parent))
       case GroupBy(parent, fn) => inPlan(Group(Map(parent, keyGrabbingFun(fn))))
@@ -44,7 +44,10 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       case Reducer(parent, fn) => throw new UnsupportedOperationException("implement")
       case Sorted(parent, ord) => throw new UnsupportedOperationException("implement")
       case Fold(parent, init, fn) => throw new UnsupportedOperationException("implement")
-      */
+      case KeyedWrapper(parent, Name(str)) => inPlan(parent)
+      case KeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
+      case UnkeyedWrapper(parent, Name(str)) => inPlan(parent)
+      case UnkeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
     }
 
   //TODO I think we can do _ <: PlannableState, as we don't need it now
@@ -75,6 +78,6 @@ case class ConcatMapMP[T, U](p: MemoryPhysical[T], fn: T => TraversableOnce[U]) 
   override def process() = p.process().flatMap(fn)
 }
 
-case class GroupMP[K, V](p: MemoryPhysical[(K, V)]) extends MemoryPhysical[(K, Seq[V])] {
-  override def process() = throw new UnsupportedOperationException("type checks!")
+case class GroupMP[K, V](p: MemoryPhysical[(K, V)]) extends MemoryPhysical[(K, TraversableOnce[V])] {
+  override def process() = p.process().groupBy(_._1).mapValues(_.map(_._2)).toSeq
 }

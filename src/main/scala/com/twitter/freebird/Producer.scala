@@ -21,7 +21,7 @@ object Wrapper {
     new Wrapper[P, S, T, UnkeyedProducer[P, S, T]] {
       override def apply(
         p: Producer[P, S, T, UnkeyedProducer[P, S, T]],
-        ann: Annotation
+        ann: Annotation[P, T]
       ): UnkeyedProducer[P, S, T] = UnkeyedWrapper(p, ann)
     }
 
@@ -29,20 +29,21 @@ object Wrapper {
     new Wrapper[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]] {
       override def apply(
         p: Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]],
-        ann: Annotation
+        ann: Annotation[P, (K, TraversableOnce[V])]
       ): KeyedProducer[P, S, K, V] = KeyedWrapper(p, ann)
     }
 }
 sealed trait Wrapper[P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This]] {
-  def apply(p: Producer[P, S, T, This], ann: Annotation): This
+  def apply(p: Producer[P, S, T, This], ann: Annotation[P, T]): This
 }
 
 
 sealed trait Producer[P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This]] {
   def name(str: String)(implicit wrap: Wrapper[P, S, T, This]): This = wrap(this, Name(str))
+
   def write[NewThis <: Producer[P, StoreState, T, NewThis]](store: P#Store[T])
-      (implicit wrap: Wrapper[P, StoreState, T, NewThis]): NewThis =
-    wrap(this.asInstanceOf[Producer[P, StoreState, T, NewThis]], Store(store))
+      (implicit wrap: Wrapper[P, S, T, This], ev: NewThis <:< This): NewThis =
+    wrap(this, Store(store)).asInstanceOf[NewThis]
 }
 
 sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
@@ -113,12 +114,13 @@ case class Sorted[P <: FreePlatform[P], K, V](parent: KeyedProducer[P, _ <: Stat
 case class Fold[P <: FreePlatform[P], K, V, U](parent: KeyedProducer[P, SortedState, K, V], init: U, fn: (U, V) => U)
   extends UnkeyedProducer[P, NoState, (K, U)]
 
-sealed trait Annotation
-case class Name(str: String) extends Annotation
-case class Store[P <: StreamPlatform[P], T](store: P#Store[T]) extends Annotation
+sealed trait Annotation[P <: StreamPlatform[P], T]
+case class Name[P <: StreamPlatform[P], T](str: String) extends Annotation[P, T]
+//TODO we could change the nature of this such that it would force a StoreState...
+case class Store[P <: StreamPlatform[P], T](store: P#Store[T]) extends Annotation[P, T]
 
 case class UnkeyedWrapper[P <: StreamPlatform[P], S <: State, T]
-  (wrapped: Producer[P, S, T, UnkeyedProducer[P, S, T]], annotation: Annotation) extends UnkeyedProducer[P, S, T]
+  (wrapped: Producer[P, S, T, UnkeyedProducer[P, S, T]], annotation: Annotation[P, T]) extends UnkeyedProducer[P, S, T]
 
 case class KeyedWrapper[P <: StreamPlatform[P], S <: State, K, V]
-  (wrapped: Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]], annotation: Annotation) extends KeyedProducer[P, S, K, V]
+  (wrapped: Producer[P, S, (K, TraversableOnce[V]), KeyedProducer[P, S, K, V]], annotation: Annotation[P, (K, TraversableOnce[V])]) extends KeyedProducer[P, S, K, V]
