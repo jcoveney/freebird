@@ -29,9 +29,8 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
 
   private[this] def keyGrabbingFun[K, V](fn: V => K): V => (K, V) = { v => (fn(v), v)}
 
-  //TODO I think we can get rid of the State part?
-  private[this] def inPlan[T, S <: State, This <: Producer[MemoryPlatform, S, T, This]](
-    p: Producer[MemoryPlatform, S, T, This]
+  private[this] def inPlan[T, This <: Producer[MemoryPlatform, _ <: State, T, This]](
+    p: Producer[MemoryPlatform, _ <: State, T, This]
   ): MemoryPhysical[T] =
     p match {
       case Source(source) => SourceMP(source)
@@ -55,8 +54,8 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
     }
 
   //TODO I think we can do _ <: PlannableState, as we don't need it now
-  override def plan[T, This <: Producer[MemoryPlatform, StoreState, T, This]](p: Producer[MemoryPlatform, StoreState, T, This]) =
-    inPlan[T, StoreState, This](p)
+  override def plan[T, This <: Producer[MemoryPlatform, StoreState, T, This]]
+    (p: Producer[MemoryPlatform, StoreState, T, This]) = inPlan[T, This](p)
 
   override def run[T](plan: MemoryPhysical[T]) {
     plan.process()
