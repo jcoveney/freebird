@@ -58,7 +58,6 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
         }.group)
     }
 
-  //TODO I think we can do _ <: PlannableState, as we don't need it now
   override def plan[T, This <: Producer[MemoryPlatform, StoreState, T, This]]
     (p: Producer[MemoryPlatform, StoreState, T, This]) = inPlan(p)
 
