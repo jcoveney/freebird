@@ -1,20 +1,15 @@
 package com.twitter.freebird
 
-// TODO need to figure out a clever way that we can stack things like naming without blowing out
-// the number of classes
-
 object Producer {
   def source[P <: StreamPlatform[P], T](s: P#Source[T]): UnkeyedProducer[P, NoState, T] = Source[P, T](s)
 }
 
 // State machine for storage etc
 sealed trait State
-sealed trait NonPlannableState extends State
-sealed trait NoState extends NonPlannableState
-sealed trait SortedState extends NonPlannableState
-
-sealed trait PlannableState extends State
-sealed trait StoreState extends PlannableState
+sealed trait NoState extends State
+sealed trait SortedState extends State
+sealed trait StoreState extends State
+// perhaps have an MR boundary state?
 
 object Wrapper {
   implicit def unkeyedWrapper[
@@ -46,7 +41,6 @@ sealed trait Wrapper[
 sealed trait Producer[P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This]] {
   def name(str: String)(implicit wrap: Wrapper[P, S, T, This, S, This]): This = wrap(this, Name(str))
 
-  //TODO need to figure out how to get the StoreState set
   def write[NewThis <: Producer[P, StoreState, T, NewThis]](store: P#Store[T])
       (implicit wrap: Wrapper[P, S, T, This, StoreState, NewThis]): NewThis =
     wrap(this, Store(store))
@@ -69,6 +63,8 @@ sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
   def groupBy[K](fn: T => K): KeyedProducer[P, NoState, K, T] = GroupBy(this, fn)
 
   def groupAll: KeyedProducer[P, NoState, Unit, T] = GroupAll(this)
+
+  def ++[U](that: UnkeyedProducer[P, _ <: State, U]): UnkeyedProducer[P, NoState, Either[T, U]] = Merge(this, that)
 }
 
 sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
@@ -76,15 +72,33 @@ sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
 
   //def mapGroup[U](fn: (K, TraversibleOnce[V]) => U): UnkeyedProducer[P, NoState, (K, U)] =
 
+  //def mapValues[U](fn: V => U): KeyedProducer[P, NoState, K, U]
+
+  //def keys: UnkeyedProducer[P, NoState, K] = Keys(this)
+
+  //def values: UnkeyedProducer[P, NoState, V] = Values(this)
+
+  def flatten: UnkeyedProducer[P, NoState, (K, V)] = Flatten(this)
+
+  //def unkey: UnkeyedProducer[P, NoState, (K, TraversableOnce[V])] = Unkey(this)
+
+  def join[NewP <: FreePlatform[NewP], S2 <: State, V2](that: KeyedProducer[P, S2, K, V2])
+      (implicit ev: P <:< NewP): KeyedProducer[NewP, NoState, K, Either[V, V2]] =
+    Join(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], that.asInstanceOf[KeyedProducer[NewP, S2, K, V2]])
+
   def reduceByKey(fn: (V, V) => V): UnkeyedProducer[P, NoState, (K, V)] = Reducer(this, fn)
 
-  def sort[NewP <: FreePlatform[NewP]]
+  def sortValues[NewP <: FreePlatform[NewP]]
+      (ord: Ordering[V])(implicit ev: P <:< NewP, d: DummyImplicit): KeyedProducer[NewP, SortedState, K, V] =
+    sortValues(ord, ev)
+
+  def sortValues[NewP <: FreePlatform[NewP]]
       (implicit ord: Ordering[V], ev: P <:< NewP): KeyedProducer[NewP, SortedState, K, V] =
     Sorted(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], ord)
 
-  def fold[NewP <: FreePlatform[NewP], U](init: U)(fn: (U, V) => U)
-      (implicit ev1: P <:< NewP, ev2: S <:< SortedState): UnkeyedProducer[NewP, NoState, (K, U)] =
-    Fold(this.asInstanceOf[KeyedProducer[NewP, SortedState, K, V]], init, fn)
+  def foldLeft[NewP <: FreePlatform[NewP], U](init: U)(fn: (U, V) => U)
+      (implicit ev: P <:< NewP): UnkeyedProducer[NewP, NoState, (K, U)] =
+    Fold(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], init, fn)
 }
 
 case class Source[P <: StreamPlatform[P], T](source: P#Source[T])
@@ -117,8 +131,21 @@ case class Reducer[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: S
 case class Sorted[P <: FreePlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V], ord: Ordering[V])
   extends KeyedProducer[P, SortedState, K, V]
 
-case class Fold[P <: FreePlatform[P], K, V, U](parent: KeyedProducer[P, SortedState, K, V], init: U, fn: (U, V) => U)
+case class Fold[P <: FreePlatform[P], K, V, U](parent: KeyedProducer[P, _ <: State, K, V], init: U, fn: (U, V) => U)
   extends UnkeyedProducer[P, NoState, (K, U)]
+
+case class Merge[P <: StreamPlatform[P], T, U](
+  left: UnkeyedProducer[P, _ <: State, T],
+  right: UnkeyedProducer[P, _ <: State, U]
+) extends UnkeyedProducer[P, NoState, Either[T, U]]
+
+case class Join[P <: FreePlatform[P], K, V, V2](
+  left: KeyedProducer[P, _ <: State, K, V],
+  right: KeyedProducer[P, _ <: State, K, V2]
+) extends KeyedProducer[P, NoState, K, Either[V, V2]]
+
+case class Flatten[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V])
+  extends UnkeyedProducer[P, NoState, (K, V)]
 
 sealed trait Annotation[P <: StreamPlatform[P], T]
 case class Name[P <: StreamPlatform[P], T](str: String) extends Annotation[P, T]
