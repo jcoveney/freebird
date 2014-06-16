@@ -15,7 +15,7 @@ trait StreamPlatform[P <: StreamPlatform[P]] {
   def run[T](plan: Plan[T]): Unit
 }
 
-import collection.mutable.{ Buffer, Map => MMap }
+import collection.mutable.Buffer
 
 class MemoryPlatform extends FreePlatform[MemoryPlatform] {
   type Source[T] = List[T]
