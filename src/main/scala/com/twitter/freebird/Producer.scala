@@ -31,6 +31,16 @@ object Wrapper {
         ann: Annotation[P, NewS, (K, TraversableOnce[V])]
       ): KeyedProducer[P, NewS, K, V] = KeyedWrapper(p, ann).asInstanceOf[KeyedProducer[P, NewS, K, V]]
     }
+
+  implicit def groupedWrapper[
+    P <: StreamPlatform[P], S <: State, K, V, NewS <: State
+  ]: Wrapper[P, S, (K, TraversableOnce[V]), GroupedProducer[P, S, K, V], NewS, GroupedProducer[P, NewS, K, V]]  =
+    new Wrapper[P, S, (K, TraversableOnce[V]), GroupedProducer[P, S, K, V], NewS, GroupedProducer[P, NewS, K, V]] {
+      override def apply(
+        p: Producer[P, S, (K, TraversableOnce[V]), GroupedProducer[P, S, K, V]],
+        ann: Annotation[P, NewS, (K, TraversableOnce[V])]
+      ): GroupedProducer[P, NewS, K, V] = GroupedWrapper(p, ann).asInstanceOf[GroupedProducer[P, NewS, K, V]]
+    }
 }
 sealed trait Wrapper[
     P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This],
@@ -61,12 +71,12 @@ sealed trait UnkeyedProducer[P <: StreamPlatform[P], S <: State, T]
 
   def collect[U](fn: PartialFunction[T, U]): UnkeyedProducer[P, NoState, U] = Collect(this, fn)
 
-  def group[K, V](implicit ev: T <:< (K, V)): KeyedProducer[P, NoState, K, V] =
+  def group[K, V](implicit ev: T <:< (K, V)): GroupedProducer[P, NoState, K, V] =
     Group(this.asInstanceOf[UnkeyedProducer[P, S, (K, V)]])
 
-  def groupBy[K](fn: T => K): KeyedProducer[P, NoState, K, T] = GroupBy(this, fn)
+  def groupBy[K](fn: T => K): GroupedProducer[P, NoState, K, T] = GroupBy(this, fn)
 
-  def groupAll: KeyedProducer[P, NoState, Unit, T] = GroupAll(this)
+  def groupAll: GroupedProducer[P, NoState, Unit, T] = GroupAll(this)
 
   def ++[U](that: UnkeyedProducer[P, _ <: State, U]): UnkeyedProducer[P, NoState, Either[T, U]] = Merge(this, that)
 }
@@ -96,17 +106,31 @@ sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
 
   def reduceByKey(fn: (V, V) => V): UnkeyedProducer[P, NoState, (K, V)] = Reducer(this, fn)
 
+  def foldLeft[NewP <: FreePlatform[NewP], U](init: U)(fn: (U, V) => U)
+      (implicit ev: P <:< NewP): UnkeyedProducer[NewP, NoState, (K, U)] =
+    Fold(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], init, fn)
+}
+
+object GroupedProducer {
+  // I chose this approach because making GroupedProducer extends KeyedProducer doesn't play
+  // nicely with the F bounded polymorphism, and adding a This to Unkeyed/Keyed/Etc creates
+  // a very nasty explosion down the chain.
+  implicit def grouped2keyed[P <: StreamPlatform[P], S <: State, K, V]
+    (p: GroupedProducer[P, S, K, V]): KeyedProducer[P, S, K, V] = p.toKeyed
+}
+
+sealed trait GroupedProducer[P <: StreamPlatform[P], S <: State, K, V]
+    extends Producer[P, S, (K, TraversableOnce[V]), GroupedProducer[P, S, K, V]] {
+
+  def toKeyed: KeyedProducer[P, S, K, V] = GroupToKeyed(this)
+
   def sortValues[NewP <: FreePlatform[NewP]]
       (ord: Ordering[V])(implicit ev: P <:< NewP, d: DummyImplicit): KeyedProducer[NewP, SortedState, K, V] =
     sortValues(ord, ev)
 
   def sortValues[NewP <: FreePlatform[NewP]]
       (implicit ord: Ordering[V], ev: P <:< NewP): KeyedProducer[NewP, SortedState, K, V] =
-    Sorted(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], ord)
-
-  def foldLeft[NewP <: FreePlatform[NewP], U](init: U)(fn: (U, V) => U)
-      (implicit ev: P <:< NewP): UnkeyedProducer[NewP, NoState, (K, U)] =
-    Fold(this.asInstanceOf[KeyedProducer[NewP, S, K, V]], init, fn)
+    Sorted(this.asInstanceOf[GroupedProducer[NewP, S, K, V]], ord)
 }
 
 case class Source[P <: StreamPlatform[P], T](source: P#Source[T])
@@ -128,18 +152,18 @@ case class Collect[P <: StreamPlatform[P], T, U](parent: UnkeyedProducer[P, _ <:
   extends UnkeyedProducer[P, NoState, U]
 
 case class Group[P <: StreamPlatform[P], K, V](parent: UnkeyedProducer[P, _ <: State, (K, V)])
-  extends KeyedProducer[P, NoState, K, V]
+  extends GroupedProducer[P, NoState, K, V]
 
 case class GroupBy[P <: StreamPlatform[P], K, V](parent: UnkeyedProducer[P, _ <: State, V], fn: V => K)
-  extends KeyedProducer[P, NoState, K, V]
+  extends GroupedProducer[P, NoState, K, V]
 
 case class GroupAll[P <: StreamPlatform[P], V](parent: UnkeyedProducer[P, _ <: State, V])
-  extends KeyedProducer[P, NoState, Unit, V]
+  extends GroupedProducer[P, NoState, Unit, V]
 
 case class Reducer[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V], fn: (V, V) => V)
   extends UnkeyedProducer[P, NoState, (K, V)]
 
-case class Sorted[P <: FreePlatform[P], K, V](parent: KeyedProducer[P, _ <: State, K, V], ord: Ordering[V])
+case class Sorted[P <: FreePlatform[P], K, V](parent: GroupedProducer[P, _ <: State, K, V], ord: Ordering[V])
   extends KeyedProducer[P, SortedState, K, V]
 
 case class Fold[P <: FreePlatform[P], K, V, U](parent: KeyedProducer[P, _ <: State, K, V], init: U, fn: (U, V) => U)
@@ -175,6 +199,9 @@ case class Unkey[P <: StreamPlatform[P], K, V](parent: KeyedProducer[P, _ <: Sta
 case class MapValues[P <: StreamPlatform[P], K, V, U](parent: KeyedProducer[P, _ <: State, K, V], fn: V => U)
   extends KeyedProducer[P, NoState, K, U]
 
+case class GroupToKeyed[P <: StreamPlatform[P], S <: State, K, V](parent: GroupedProducer[P, S, K, V])
+  extends KeyedProducer[P, S, K, V]
+
 // Annotations give us the power to embed information in the graph, but also to add constraints, such as
 // the StoreState. The annotation type takes precedence in the wrapping however as in the case of Name,
 // the type checker will just fill in the types.
@@ -190,3 +217,8 @@ case class KeyedWrapper[P <: StreamPlatform[P], S1 <: State, S2 <: State, K, V](
   wrapped: Producer[P, S1, (K, TraversableOnce[V]), KeyedProducer[P, S1, K, V]],
   annotation: Annotation[P, S2, (K, TraversableOnce[V])]
 ) extends KeyedProducer[P, S2, K, V]
+
+case class GroupedWrapper[P <: StreamPlatform[P], S1 <: State, S2 <: State, K, V](
+  wrapped: Producer[P, S1, (K, TraversableOnce[V]), GroupedProducer[P, S1, K, V]],
+  annotation: Annotation[P, S2, (K, TraversableOnce[V])]
+) extends GroupedProducer[P, S2, K, V]

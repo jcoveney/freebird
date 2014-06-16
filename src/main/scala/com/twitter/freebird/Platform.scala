@@ -41,17 +41,20 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       // we can conveniently utilize operations in the unkeyed layer. This is not necessaryily
       // the case for all platforms but is fine here.
       case Unkey(parent)          => inPlan(parent)
+      case GroupToKeyed(parent)   => inPlan(parent)
       case Flatten(parent)        => inPlan(parent.unkey.concatMap { case (k, v) => v.map { (k, _) } })
       case Keys(parent)           => inPlan(parent.unkey.map(_._1))
       case Values(parent)         => inPlan(parent.unkey.concatMap(_._2))
-      case MapValues(parent, fn)  => inPlan(parent.unkey.map { case (k, v) => (k, v.map(fn)) } )
+      case MapValues(parent, fn)  => inPlan(parent.unkey.map { case (k, v) => (k, v.map(fn).toList) })
       case Reducer(parent, fn)    => inPlan(parent.unkey.map { case (k, v) => (k, v.reduce(fn))})
       case Fold(parent, init, fn) => inPlan(parent.unkey.map { case (k, v) => (k, v.foldLeft(init)(fn))})
       case Sorted(parent, ord)    => inPlan(parent.unkey.map { case (k, v) => (k, v.toIndexedSeq.sorted(ord))})
-      case KeyedWrapper(parent, Name(str))      => inPlan(parent)
-      case KeyedWrapper(parent, Store(store))   => StoreMP(inPlan(parent), store)
       case UnkeyedWrapper(parent, Name(str))    => inPlan(parent)
       case UnkeyedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
+      case KeyedWrapper(parent, Name(str))      => inPlan(parent)
+      case KeyedWrapper(parent, Store(store))   => StoreMP(inPlan(parent), store)
+      case GroupedWrapper(parent, Name(str))    => inPlan(parent)
+      case GroupedWrapper(parent, Store(store)) => StoreMP(inPlan(parent), store)
       case Join(left, right) =>
         inPlan(left.cogroup(right).concatMap { case (k, (lft, rght)) =>
           lft.flatMap { l => rght.map { r => (k, (l, r)) } }
