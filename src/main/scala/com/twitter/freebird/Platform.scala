@@ -46,6 +46,7 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
       case Keys(parent)           => inPlan(parent.unkey.map(_._1))
       case Values(parent)         => inPlan(parent.unkey.concatMap(_._2))
       case MapValues(parent, fn)  => inPlan(parent.unkey.map { case (k, v) => (k, v.map(fn).toList) })
+      case MapGroup(parent, fn)   => inPlan(parent.unkey.map { case (k, v) => (k, fn(k, v)) })
       case Reducer(parent, fn)    => inPlan(parent.unkey.map { case (k, v) => (k, v.reduce(fn))})
       case Fold(parent, init, fn) => inPlan(parent.unkey.map { case (k, v) => (k, v.foldLeft(init)(fn))})
       case Sorted(parent, ord)    => inPlan(parent.unkey.map { case (k, v) => (k, v.toIndexedSeq.sorted(ord))})
