@@ -44,6 +44,7 @@ object Wrapper {
       ): GroupedProducer[P, NewS, K, V] = GroupedWrapper(p, ann)
     }
 }
+
 sealed trait Wrapper[
     P <: StreamPlatform[P], S <: State, T, This <: Producer[P, S, T, This],
     NewS <: State, NewThis <: Producer[P, NewS, T, NewThis]] {
