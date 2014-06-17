@@ -1,12 +1,18 @@
 package com.twitter.freebird
 
+import collection.mutable.Buffer
+
 class MRPlatform extends FreePlatform[MRPlatform] {
+  type Source[T] = Iterator[T]
+  type Store[T] = Buffer[T]
+  type Plan[T] = MRPhysical[T]
+
   private[this] def inPlan[T, This <: Producer[MRPlatform, _ <: State, T, This]](
     p: Producer[MRPlatform, _ <: State, T, This]
   ): MRPhysical[T] =
     p match {
-      case Source(source)         => SourceMP(source)
-      case ConcatMap(parent, fn)  => ConcatMapMP(inPlan(parent), fn)
+      case Source(source)         => SourceMRP(source)
+      case ConcatMap(parent, fn)  => ConcatMapMRP(inPlan(parent), fn)
       //case Group(parent)          => GroupMP(inPlan(parent))
       //case CoGroup(left, right)   => CoGroupMP(inPlan(left), inPlan(right))
       //case Merge(left, right)     => MergeMP(inPlan(left), inPlan(right))
@@ -44,4 +50,34 @@ class MRPlatform extends FreePlatform[MRPlatform] {
   override def run[T](plan: MRPhysical[T]) {
     //TODO implement
   }
+
+  //TODO temp for debugging, will have to remove when I have proper sources
+  def dump[T, This <: Producer[MRPlatform, _ <: State, T, This]]
+    (p: Producer[MRPlatform, _ <: State, T, This]) {
+      @annotation.tailrec
+      def print[T](phys: MRPhysical[T]) {
+        phys.getNext() match {
+          case Some(n) => println(n); print(phys)
+          case None => None
+        }
+      }
+      print(inPlan(p))
+  }
+}
+
+// TODO eventually this will encapsulate the information we need for a basic MR job. In the future might be useful
+// to make it use something we already know exists...perhaps just an input format?
+case class MRSourceSpec[T](input: Iterator[T])
+
+trait MRPhysical[T] {
+  def iterator(): Iterator[T]
+}
+
+// This iterator will be fed by the InputFormat, which will be configured elsewhere
+case class SourceMRP[T](input: Iterator[T]) extends MRPhysical[T] {
+  override def iterator() = input
+}
+
+case class ConcatMapMRP[T, U](parent: MRPhysical[T], fn: T => TraversableOnce[U]) extends MRPhysical[U] {
+  override def iterator() = iterator.flatMap(fn)
 }
