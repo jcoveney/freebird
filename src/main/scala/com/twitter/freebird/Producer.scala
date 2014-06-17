@@ -52,8 +52,6 @@ sealed trait KeyedProducer[P <: StreamPlatform[P], S <: State, K, V]
   def name(str: String): KeyedProducer[P, S, K, V] = KeyedWrapper(this, Name(str))
   def write(store: P#Store[P#Keyed[K, V]]): KeyedProducer[P, StoreState, K, V] = KeyedWrapper(this, Store(store))
 
-  def ann(store: P#Store[P#Keyed[K, V]])(implicit anno: Annotator[P, S, StoreState, P#Keyed[K, V], KeyedProducer[P, S, K, V], KeyedProducer[P, StoreState, K, V]]) = anno(this, Store(store))
-
   def mapGroup[U](fn: P#Keyed[K, V] => U): UnkeyedProducer[P, NoState, (K, U)] = MapGroup(this, fn)
 
   def mapValues[U](fn: V => U): KeyedProducer[P, NoState, K, U] = MapValues(this, fn)
