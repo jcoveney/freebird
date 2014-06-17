@@ -26,7 +26,7 @@ trait StreamPlatform[P <: StreamPlatform[P]] {
   be "easy" to do.
   */
 
-  def plan[T, This <: Producer[P, StoreState, T, This]](p: Producer[P, StoreState, T, This]): Plan[T]
+  def plan[T](p: Producer[P, StoreState, T]): Plan[T]
 
   def run[T](plan: Plan[T]): Unit
 }
@@ -38,9 +38,7 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
   type Store[T] = Buffer[T]
   type Plan[T] = MemoryPhysical[T]
 
-  private[this] def inPlan[T, This <: Producer[MemoryPlatform, _ <: State, T, This]](
-    p: Producer[MemoryPlatform, _ <: State, T, This]
-  ): MemoryPhysical[T] =
+  private[this] def inPlan[T](p: Producer[MemoryPlatform, _ <: State, T]): MemoryPhysical[T] =
     p match {
       case Source(source)         => SourceMP(source)
       case ConcatMap(parent, fn)  => ConcatMapMP(inPlan(parent), fn)
@@ -78,16 +76,14 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
         }.group)
     }
 
-  override def plan[T, This <: Producer[MemoryPlatform, StoreState, T, This]]
-    (p: Producer[MemoryPlatform, StoreState, T, This]) = inPlan(p)
+  override def plan[T](p: Producer[MemoryPlatform, StoreState, T]) = inPlan(p)
 
   override def run[T](plan: MemoryPhysical[T]) {
     plan.process()
   }
 
   // Useful for debugging
-  def dump[T, This <: Producer[MemoryPlatform, _ <: State, T, This]]
-    (p: Producer[MemoryPlatform, _ <: State, T, This]) {
+  def dump[T](p: Producer[MemoryPlatform, _ <: State, T]) {
       inPlan(p).process().foreach(println(_))
   }
 }
