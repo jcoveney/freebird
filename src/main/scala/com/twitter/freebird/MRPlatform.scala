@@ -48,32 +48,21 @@ class MRPlatform extends FreePlatform[MRPlatform] {
     //TODO implement
   }
 
-  //TODO temp for debugging, will have to remove when I have proper sources
-  def dump[T](p: Producer[MRPlatform, _ <: State, T, This]) {
-    @annotation.tailrec
-    def print[T](phys: MRPhysical[T]) {
-      phys.getNext() match {
-        case Some(n) => println(n); print(phys)
-        case None => None
-      }
-    }
-    print(inPlan(p))
+  // For debuggin
+  def dump[T](p: Producer[MRPlatform, _ <: State, T]) {
+    inPlan(p).iterator().foreach(println)
   }
 }
-
-// TODO eventually this will encapsulate the information we need for a basic MR job. In the future might be useful
-// to make it use something we already know exists...perhaps just an input format?
-case class MRSourceSpec[T](input: Iterator[T])
 
 trait MRPhysical[T] {
   def iterator(): Iterator[T]
 }
 
 // This iterator will be fed by the InputFormat, which will be configured elsewhere
-case class SourceMRP[T](input: Iterator[T]) extends MRPhysical[T] {
+case class SourceMRP[T](input: MRPlatform#Source[T]) extends MRPhysical[T] {
   override def iterator() = input
 }
 
 case class ConcatMapMRP[T, U](parent: MRPhysical[T], fn: T => TraversableOnce[U]) extends MRPhysical[U] {
-  override def iterator() = iterator.flatMap(fn)
+  override def iterator() = parent.iterator.flatMap(fn)
 }
