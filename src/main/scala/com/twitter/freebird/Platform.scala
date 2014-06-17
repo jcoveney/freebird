@@ -21,6 +21,9 @@ trait StreamPlatform[P <: StreamPlatform[P]] {
   https://gist.github.com/jcoveney/7ccb8fdd085ed9a25ac9
   http://stackoverflow.com/questions/24253087/getting-implicit-resolution-and-type-projection-to-work-probably-need-a-workaro
   If I can figure out how to get that case to work, I can probably get this working.
+
+  One solution is to use implicit macros. Since the macro is so simple and it is mainly just type wrangling, I bet it would
+  be "easy" to do.
   */
 
   def plan[T, This <: Producer[P, StoreState, T, This]](p: Producer[P, StoreState, T, This]): Plan[T]
