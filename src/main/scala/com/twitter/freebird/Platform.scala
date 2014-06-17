@@ -9,6 +9,7 @@ trait StreamPlatform[P <: StreamPlatform[P]] {
   type Source[_]
   type Store[_]
   type Plan[_]
+  type Keyed[_, _]
   /*
   Note that I would love to have a type Keyed which would abstract out the implementation type of
   a key/value pair in the producer. The producer would be:
@@ -26,7 +27,7 @@ trait StreamPlatform[P <: StreamPlatform[P]] {
   be "easy" to do.
   */
 
-  def plan[T, This <: Producer[P, StoreState, T, This]](p: Producer[P, StoreState, T, This]): Plan[T]
+  def plan[T](p: Producer[P, StoreState, T]): Plan[T]
 
   def run[T](plan: Plan[T]): Unit
 }

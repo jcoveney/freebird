@@ -7,9 +7,7 @@ class MRPlatform extends FreePlatform[MRPlatform] {
   type Store[T] = Buffer[T]
   type Plan[T] = MRPhysical[T]
 
-  private[this] def inPlan[T, This <: Producer[MRPlatform, _ <: State, T, This]](
-    p: Producer[MRPlatform, _ <: State, T, This]
-  ): MRPhysical[T] =
+  private[this] def inPlan[T](p: Producer[MRPlatform, _ <: State, T]): MRPhysical[T] =
     p match {
       case Source(source)         => SourceMRP(source)
       case ConcatMap(parent, fn)  => ConcatMapMRP(inPlan(parent), fn)
@@ -44,24 +42,22 @@ class MRPlatform extends FreePlatform[MRPlatform] {
       //  }.group)
     }
 
-  override def plan[T, This <: Producer[MRPlatform, StoreState, T, This]]
-    (p: Producer[MRPlatform, StoreState, T, This]) = inPlan(p)
+  override def plan[T](p: Producer[MRPlatform, StoreState, T]) = inPlan(p)
 
   override def run[T](plan: MRPhysical[T]) {
     //TODO implement
   }
 
   //TODO temp for debugging, will have to remove when I have proper sources
-  def dump[T, This <: Producer[MRPlatform, _ <: State, T, This]]
-    (p: Producer[MRPlatform, _ <: State, T, This]) {
-      @annotation.tailrec
-      def print[T](phys: MRPhysical[T]) {
-        phys.getNext() match {
-          case Some(n) => println(n); print(phys)
-          case None => None
-        }
+  def dump[T](p: Producer[MRPlatform, _ <: State, T, This]) {
+    @annotation.tailrec
+    def print[T](phys: MRPhysical[T]) {
+      phys.getNext() match {
+        case Some(n) => println(n); print(phys)
+        case None => None
       }
-      print(inPlan(p))
+    }
+    print(inPlan(p))
   }
 }
 
