@@ -9,6 +9,7 @@ trait StreamPlatform[P <: StreamPlatform[P]] {
   type Source[_]
   type Store[_]
   type Plan[_]
+  type Keyed[_, _]
   /*
   Note that I would love to have a type Keyed which would abstract out the implementation type of
   a key/value pair in the producer. The producer would be:
@@ -37,6 +38,7 @@ class MemoryPlatform extends FreePlatform[MemoryPlatform] {
   type Source[T] = List[T]
   type Store[T] = Buffer[T]
   type Plan[T] = MemoryPhysical[T]
+  type Keyed[K, V] = (K, TraversableOnce[V])
 
   private[this] def inPlan[T](p: Producer[MemoryPlatform, _ <: State, T]): MemoryPhysical[T] =
     p match {
