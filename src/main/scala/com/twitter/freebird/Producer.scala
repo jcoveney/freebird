@@ -5,10 +5,10 @@ object Producer {
 }
 
 // State machine for storage etc. If we want more, figure out a way that we can encode
-// mutliple types of states in the same type without an explosion. I'm thinking State[T, T2, T3] etc.
+// multiple types of states in the same type without an explosion. I'm thinking State[T, T2, T3] etc.
 // This way various states won't trample over each other. This should be reserved for information
 // that is incidental, not structural. For example, group status should be encoded in the types,
-// but store state can be thrown out. This are overriden by annotations, if they so desire (see Store).
+// but store state can be thrown out. These are overridden by annotations, if they so desire (see Store).
 sealed trait State
 sealed trait NoState extends State
 sealed trait StoreState extends State
